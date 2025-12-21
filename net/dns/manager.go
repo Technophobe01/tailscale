@@ -121,6 +121,13 @@ func NewManager(logf logger.Logf, oscfg OSConfigurator, health *health.Tracker, 
 
 	m.ctx, m.ctxCancel = context.WithCancel(context.Background())
 	m.logf("using %T", m.os)
+
+	// If the OS configurator supports receiving the resolver (e.g., for the local
+	// DNS listener on the macOS CLI/Homebrew build), provide it.
+	if rs, ok := m.os.(interface{ SetResolver(*resolver.Resolver) }); ok {
+		rs.SetResolver(m.resolver)
+	}
+
 	return m
 }
 
