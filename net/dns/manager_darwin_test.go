@@ -276,6 +276,23 @@ func TestRemoveResolverFiles(t *testing.T) {
 	}
 }
 
+func TestCloseWithoutSetDNSDoesNotRemoveResolverFiles(t *testing.T) {
+	c := newTestConfigurator(t)
+
+	managed := filepath.Join(c.resolverDir, "ts.net")
+	if err := os.WriteFile(managed, []byte(macResolverFileHeader+"nameserver 100.100.100.100\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !fileExists(managed) {
+		t.Error("Close before SetDNS should not remove resolver files from another instance")
+	}
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
