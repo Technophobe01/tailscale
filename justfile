@@ -93,8 +93,10 @@ install-daemon:
     STATE="$(just resolve-state)"
     echo "Reusing state file: $STATE"
     echo "Disabling any existing tailscaled management..."
-    sudo brew services stop tailscale 2>/dev/null || true
+    # Use launchctl bootout (leaves the plist + Homebrew ownership untouched) rather
+    # than `brew services stop`, so `just revert` can re-bootstrap without a chown.
     sudo launchctl bootout system/{{official_label}} 2>/dev/null || true
+    sudo launchctl bootout system/homebrew.mxcl.tailscale 2>/dev/null || sudo brew services stop tailscale 2>/dev/null || true
     sudo pkill -x tailscaled 2>/dev/null || true
     sleep 1
     echo "Writing {{plist_path}} -> {{bin_dir}}/tailscaled"
@@ -129,14 +131,23 @@ revert:
     set -euo pipefail
     sudo launchctl bootout system/{{plist_label}} 2>/dev/null || true
     sudo rm -f {{plist_path}}
-    if [ -f "/Library/LaunchDaemons/{{official_label}}.plist" ]; then
-      sudo launchctl bootstrap system "/Library/LaunchDaemons/{{official_label}}.plist" 2>/dev/null || true
-      sudo launchctl kickstart -k "system/{{official_label}}" 2>/dev/null || true
-      echo "Removed patched daemon; restored {{official_label}}."
-    else
+    # Restore the official daemon via launchctl (no Homebrew chown). Try the stock
+    # LaunchDaemon, then the Homebrew system service plist; fall back to brew services.
+    restored=""
+    for lbl in {{official_label}} homebrew.mxcl.tailscale; do
+      plist="/Library/LaunchDaemons/$lbl.plist"
+      if [ -f "$plist" ]; then
+        sudo launchctl bootstrap system "$plist" 2>/dev/null || true
+        sudo launchctl kickstart -k "system/$lbl" 2>/dev/null || true
+        restored="$lbl"
+        break
+      fi
+    done
+    if [ -z "$restored" ]; then
       sudo brew services start tailscale
-      echo "Removed patched daemon; restored the Homebrew tailscale service."
+      restored="homebrew.mxcl.tailscale (via brew services; may take Cellar ownership once)"
     fi
+    echo "Removed patched daemon; restored $restored."
     echo "NOTE: if you previously copied the patched binary over Homebrew's, run"
     echo "      'brew reinstall tailscale' to restore the official binary."
 
@@ -168,7 +179,7 @@ dns-check:
 
 # Test MagicDNS resolution against the local listener (default port 5533).
 dns-test HOST:
-    @echo "Resolving {{HOST}} via the local listener on 127.0.0.1:5533 (see `just dns-check` if 5533 was busy)..."
+    @echo "Resolving {{HOST}} via the local listener on 127.0.0.1:5533 (run 'just dns-check' if 5533 was busy)..."
     @dig @127.0.0.1 -p 5533 {{HOST}} +short
 
 # Remove build artifacts.
