@@ -80,43 +80,60 @@ just test-dns     # runs tailscale.com/net/dns/... (the area this patch touches)
 just test ./...   # full suite (slower)
 ```
 
-## Deploy (swap in your locally built binaries)
+## Deploy (run the patched daemon via launchd)
+
+This does **not** modify or copy over your Homebrew install. It installs a dedicated
+launchd daemon (`/Library/LaunchDaemons/com.tailscale-patched.tailscaled.plist`) that
+runs the patched binary from `./bin/tailscaled`, disables whatever currently runs
+tailscaled, and starts the patched one — reusing your existing node identity (same
+`--state`), so you don't have to log in again. Because it's a `KeepAlive` launchd
+daemon, it survives reboots until you `just revert`.
 
 ```bash
-just install-preview   # show exactly what would be overwritten — no changes
-just deploy            # build + install over Homebrew binaries + restart tailscaled
+just check    # show how your tailscaled is currently launched (state/socket + launchd jobs)
+just deploy   # build + install the patched launchd daemon + start it (uses sudo)
 ```
 
-`deploy` copies `./bin/tailscale[d]` over your Homebrew binaries (auto-detecting
-`/opt/homebrew` on Apple Silicon or `/usr/local` on Intel) and restarts the daemon.
-
-The default `stop`/`start`/`restart` recipes manage the Homebrew **tailscale service**
-via `brew services` (the standard way most people run it). If you instead launch
-`tailscaled` by hand, use the `*-manual` recipes (`just start-manual`, `just stop-manual`,
-`just restart-manual`), which use the explicit state/socket paths defined in the justfile.
+`just check` prints the running daemon's `--state`/`--socket`. The justfile defaults
+to the common macOS layout (`/var/lib/tailscale/tailscaled.state`,
+`/var/run/tailscaled.socket`); if `check` shows different paths, set `state_file` /
+`socket_file` at the top of the justfile to match — otherwise the patched daemon comes
+up logged out (in which case just run `./bin/tailscale up` once).
 
 ### Verify it works
 
+Use the **patched CLI** from `./bin`:
+
 ```bash
+just status                          # confirm the patched tailscaled is running
 just dns-check                       # show the /etc/resolver files that were written
 just dns-test myhost.tailnet.ts.net  # resolve a MagicDNS name via the local listener
+./bin/tailscale status               # patched CLI talks to the patched daemon
 ping myhost.tailnet.ts.net           # should resolve to a 100.x.x.x address
 ```
 
-## Revert to the official binaries
+## Revert to the official daemon
 
 ```bash
-just revert       # brew reinstall tailscale (restores Tailscale's official binaries)
-just restart
+just revert   # remove the patched launchd daemon and restart the official one
 ```
 
-Note: a normal `brew upgrade tailscale` will also replace the patched binaries with the
-official ones — re-run `just deploy` after upgrading if you want to keep the patch.
+`just revert` boots out and deletes the patched LaunchDaemon, then re-enables your
+official daemon (the stock `com.tailscale.tailscaled` LaunchDaemon if present, otherwise
+the Homebrew `tailscale` service). Nothing in your Homebrew install was modified by
+deploy, so there is nothing to reinstall — **unless** you had previously copied the
+patched binary over Homebrew's, in which case run `brew reinstall tailscale` once.
 
 ## Caveats
 
 - **Unsupported, dev build.** Built off an unstable dev tree; expect rough edges and
-  rebuild as you pull updates.
+  rebuild as you pull updates. After pulling new commits, re-run `just deploy`.
+- **Keep the repo in place.** The launchd daemon runs `./bin/tailscaled` by absolute
+  path. If you move or delete the checkout, run `just revert` first (or the daemon will
+  fail to start).
+- **State must match.** The patched daemon reuses your identity only if `state_file`
+  matches your current daemon's `--state` (see `just check`). If in doubt,
+  `./bin/tailscale up` re-authenticates.
 - **Trademark.** Do not redistribute the compiled binaries under the Tailscale name or
   logo. Share the source/branch and let people build their own.
 - **Security.** The local DNS listener binds to `127.0.0.1` only (not network-exposed).
