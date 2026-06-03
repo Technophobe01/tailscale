@@ -94,11 +94,18 @@ just check    # show how your tailscaled is currently launched (state/socket + l
 just deploy   # build + install the patched launchd daemon + start it (uses sudo)
 ```
 
-`just check` prints the running daemon's `--state`/`--socket`. The justfile defaults
-to the common macOS layout (`/var/lib/tailscale/tailscaled.state`,
-`/var/run/tailscaled.socket`); if `check` shows different paths, set `state_file` /
-`socket_file` at the top of the justfile to match — otherwise the patched daemon comes
-up logged out (in which case just run `./bin/tailscale up` once).
+`state_file` defaults to `auto`: the tooling detects your state file from an existing
+LaunchDaemon's `--state` (e.g. a custom `com.tailscale.tailscaled`), or by probing the
+common macOS locations (`/Library/Tailscale/tailscaled.state` on a stock Homebrew
+install, `/var/lib/tailscale/...` for a custom setup). `just check` prints the
+**Resolved state file** it will use. If detection is wrong for your machine, override it:
+
+```bash
+just state_file=/path/to/tailscaled.state deploy
+```
+
+If the patched daemon ever comes up logged out, the state path didn't match — re-check
+with `just check`, override `state_file`, and redeploy (or run `./bin/tailscale up` once).
 
 ### Verify it works
 
@@ -131,9 +138,10 @@ patched binary over Homebrew's, in which case run `brew reinstall tailscale` onc
 - **Keep the repo in place.** The launchd daemon runs `./bin/tailscaled` by absolute
   path. If you move or delete the checkout, run `just revert` first (or the daemon will
   fail to start).
-- **State must match.** The patched daemon reuses your identity only if `state_file`
-  matches your current daemon's `--state` (see `just check`). If in doubt,
-  `./bin/tailscale up` re-authenticates.
+- **State must match.** The patched daemon reuses your identity only if its `--state`
+  matches your current daemon's. `state_file=auto` detects this; verify with the
+  **Resolved state file** line in `just check`, override `state_file` if needed, and if
+  in doubt `./bin/tailscale up` re-authenticates.
 - **Trademark.** Do not redistribute the compiled binaries under the Tailscale name or
   logo. Share the source/branch and let people build their own.
 - **Security.** The local DNS listener binds to `127.0.0.1` only (not network-exposed).

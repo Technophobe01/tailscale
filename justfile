@@ -14,10 +14,12 @@
 project_dir := justfile_directory()
 bin_dir := project_dir / "bin"
 
-# The --state and --socket your tailscaled runs with. The patched daemon uses the
-# SAME --state to reuse your node identity (no re-login). These defaults match the
-# common macOS layout; if yours differ, run `just check` and override them.
-state_file := "/var/lib/tailscale/tailscaled.state"
+# The state file the patched daemon reuses (so your node identity carries over,
+# no re-login). "auto" detects it from the common macOS locations
+# (/Library/Tailscale on a stock Homebrew install, /var/lib/tailscale for a custom
+# LaunchDaemon, etc.). Override with an explicit path if you keep state elsewhere:
+#   just state_file=/path/to/tailscaled.state deploy
+state_file := "auto"
 socket_file := "/var/run/tailscaled.socket"
 
 # Where the patched daemon logs.
@@ -32,6 +34,30 @@ official_label := "com.tailscale.tailscaled"
 default:
     @just --list
 
+# Resolve the state-file path: explicit state_file, else auto-detect a non-empty
+# tailscaled.state in the common macOS locations. Internal helper.
+[private]
+resolve-state:
+    #!/usr/bin/env bash
+    if [ "{{state_file}}" != "auto" ]; then echo "{{state_file}}"; exit 0; fi
+    # 1. Honor an existing official LaunchDaemon's explicit --state (skip ours).
+    for plist in /Library/LaunchDaemons/*tailscale*.plist; do
+      [ -e "$plist" ] || continue
+      case "$plist" in *{{plist_label}}*) continue ;; esac
+      s=$(/usr/bin/plutil -extract ProgramArguments xml1 -o - "$plist" 2>/dev/null \
+            | grep -o -- '--state=[^<]*' | head -1 | sed 's/^--state=//')
+      if [ -n "$s" ]; then echo "$s"; exit 0; fi
+    done
+    # 2. Else probe the common macOS state locations for a non-empty state file.
+    for p in /Library/Tailscale/tailscaled.state \
+             /var/lib/tailscale/tailscaled.state \
+             /var/root/.local/share/tailscale/tailscaled.state \
+             /opt/homebrew/var/lib/tailscale/tailscaled.state; do
+      if sudo test -s "$p" 2>/dev/null; then echo "$p"; exit 0; fi
+    done
+    # 3. Fallback: stock macOS Homebrew default.
+    echo /Library/Tailscale/tailscaled.state
+
 # Show how tailscaled is currently launched (running process + launchd jobs).
 check:
     @echo "Running tailscaled:"
@@ -40,7 +66,8 @@ check:
     @echo "launchd jobs mentioning tailscale (needs sudo):"
     @sudo launchctl list 2>/dev/null | grep -i tailscale || echo "  (none)"
     @echo ""
-    @echo "justfile is set to:  --state={{state_file}}  --socket={{socket_file}}"
+    @echo "Resolved state file: $(just resolve-state)"
+    @echo "Socket:              {{socket_file}}"
 
 # Build tailscale and tailscaled into ./bin using Tailscale's pinned Go toolchain.
 build:
@@ -63,6 +90,8 @@ deploy: build install-daemon
 install-daemon:
     #!/usr/bin/env bash
     set -euo pipefail
+    STATE="$(just resolve-state)"
+    echo "Reusing state file: $STATE"
     echo "Disabling any existing tailscaled management..."
     sudo brew services stop tailscale 2>/dev/null || true
     sudo launchctl bootout system/{{official_label}} 2>/dev/null || true
@@ -76,7 +105,7 @@ install-daemon:
       '<key>Label</key><string>{{plist_label}}</string>' \
       '<key>ProgramArguments</key><array>' \
       '<string>{{bin_dir}}/tailscaled</string>' \
-      '<string>--state={{state_file}}</string>' \
+      "<string>--state=$STATE</string>" \
       '<string>--socket={{socket_file}}</string>' \
       '</array>' \
       '<key>RunAtLoad</key><true/>' \
