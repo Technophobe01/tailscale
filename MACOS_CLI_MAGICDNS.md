@@ -63,8 +63,7 @@ variant usable for MagicDNS in the meantime.
 ## Get the code
 
 ```bash
-# Replace <branch> with the published branch name (e.g. fix/macos-magicdns-homebrew).
-git clone -b <branch> https://github.com/Technophobe01/tailscale.git
+git clone -b fix/macos-magicdns-homebrew https://github.com/Technophobe01/tailscale.git
 cd tailscale
 ```
 
