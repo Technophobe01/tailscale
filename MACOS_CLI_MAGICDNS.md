@@ -107,6 +107,28 @@ just state_file=/path/to/tailscaled.state deploy
 If the patched daemon ever comes up logged out, the state path didn't match — re-check
 with `just check`, override `state_file`, and redeploy (or run `./bin/tailscale up` once).
 
+### macOS privacy (TCC) prompts
+
+The Homebrew/CLI `tailscaled` is not the GUI Tailscale.app and has no Apple Developer ID
+signature, so macOS TCC treats it as an unknown binary. When run as a root LaunchDaemon
+it can land on consent prompts attributed to "tailscaled" for **Photo Library** and
+**Google Drive / iCloud Drive** (the macOS File Provider Domain category). These are
+**macOS prompts about path access, not Tailscale asking for your data** — nothing in
+this fork's code reads photos or cloud-drive files.
+
+`just deploy` minimizes these by:
+
+- **Ad-hoc signing the binary** with a stable identifier (`com.tailscale.tailscaled-patched`)
+  in `just build`, so Console/TCC logs have a consistent subject across rebuilds.
+- **Sandboxing the daemon environment** in the LaunchDaemon plist:
+  `WorkingDirectory=/var/empty`, `HOME=/var/empty`, `TMPDIR=/var/empty`. This stops any
+  `$HOME`-derived path probing from landing inside `~/Pictures` or `~/Library/CloudStorage/`,
+  which is what triggers the prompts.
+
+If a prompt still appears on first deploy, **"Don't Allow" is safe.** MagicDNS, subnet
+routing, and CLI Taildrop do not need access to Photos, iCloud Drive, or Google Drive;
+the daemon will get `EPERM` for any such read and continue.
+
 ### Verify it works
 
 Use the **patched CLI** from `./bin`:

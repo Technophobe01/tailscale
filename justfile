@@ -69,10 +69,14 @@ check:
     @echo "Resolved state file: $(just resolve-state)"
     @echo "Socket:              {{socket_file}}"
 
-# Build tailscale and tailscaled into ./bin using Tailscale's pinned Go toolchain.
+# Build ./bin/tailscale and ./bin/tailscaled (Tailscale's pinned Go toolchain).
 build:
     cd {{project_dir}} && ./tool/go build -o bin/tailscale tailscale.com/cmd/tailscale
     cd {{project_dir}} && ./tool/go build -o bin/tailscaled tailscale.com/cmd/tailscaled
+    # Replace Go's linker-signed adhoc "a.out" identifier with a stable one so
+    # TCC/Console diagnostics name the same subject across rebuilds. The cdhash
+    # still rotates per build, so this does not by itself stabilize TCC grants.
+    codesign --force --sign - --identifier com.tailscale.tailscaled-patched {{bin_dir}}/tailscaled
     @echo "Built binaries in {{bin_dir}}"
 
 # Run the full test suite (pass package paths/flags as ARGS).
@@ -110,6 +114,11 @@ install-daemon:
       "<string>--state=$STATE</string>" \
       '<string>--socket={{socket_file}}</string>' \
       '</array>' \
+      '<key>WorkingDirectory</key><string>/var/empty</string>' \
+      '<key>EnvironmentVariables</key><dict>' \
+      '<key>HOME</key><string>/var/empty</string>' \
+      '<key>TMPDIR</key><string>/var/empty</string>' \
+      '</dict>' \
       '<key>RunAtLoad</key><true/>' \
       '<key>KeepAlive</key><true/>' \
       '<key>StandardOutPath</key><string>{{patched_log}}</string>' \
