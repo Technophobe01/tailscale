@@ -53,6 +53,62 @@ This fork does not attempt that architecture and does not reopen the rejected pu
 ([#18272](https://github.com/tailscale/tailscale/pull/18272)). It simply keeps the CLI
 variant usable for MagicDNS in the meantime.
 
+## Upstream convergence status (as of v1.102.2)
+
+Tailscale is converging on its own fix for macOS CLI DNS. The work is tracked in
+[#1338](https://github.com/tailscale/tailscale/issues/1338) (still **open** — the issue
+thread is quiet, but the progress is in commits, not comments). In v1.102.2, Tailscale
+landed two changes under "Updates #1338" (both by a core maintainer, 2026-06-28):
+
+- `9013b6ec1` **net/dns: simplify split DNS compile path** — the unsandboxed darwin
+  (CLI) path now sets `ocfg.MatchDomains = cfg.matchDomains()` like every other
+  split-DNS-capable OS, instead of being excluded as "apple".
+- `10672a63f` **net/dns: support global resolvers in macOS tailscaled** — adds a
+  scutil / SystemConfiguration global resolver (`setGlobalDNS`) so that a tailnet using
+  global DNS (default resolvers + MagicDNS) is served by pointing macOS at
+  100.100.100.100 through the dynamic store. On current macOS this **works**.
+
+Because of this, the fork was rebased onto v1.102.2 with a reduced patch set.
+
+### What this patch no longer needs to do
+
+- **Forcing `MatchDomains` for darwin in `compileConfig` (net/dns/manager.go).** The
+  original patch added darwin-specific blocks that appended MagicDNS/`LocalDomains` and
+  split routes to `MatchDomains`. Upstream's `9013b6ec1` now does the equivalent via the
+  normal path (`cfg.matchDomains()`), and darwin returns before ever reaching those
+  blocks. They were **dead code after the rebase and have been removed.**
+- **A local listener for the global-DNS case.** When the tailnet uses global default
+  resolvers (no split domains), upstream's `setGlobalDNS` (`10672a63f`) makes MagicDNS
+  resolve on its own. The listener is not engaged for that configuration.
+
+### What this patch still needs to do
+
+- **Local DNS listener on 127.0.0.1 (net/dns/manager_darwin.go), plus the `SetResolver`
+  hook and the `/etc/resolver` `port` directive.** Upstream still writes `/etc/resolver`
+  files pointing at 100.100.100.100 for the **split-DNS** case (non-empty
+  `MatchDomains`), and on the macOS CLI those packets do not reach userspace (see root
+  cause above). The listener re-points those files at `127.0.0.1:<port>`. This is the
+  part upstream has **not** adopted (see the rejection of #18272 — they prefer the scutil
+  direction), so it remains necessary for split-DNS tailnets.
+- **The `dns.CleanUp` race fix (net/dns/manager_darwin.go, `Close()` `hadFiles` guard).**
+  [#18800](https://github.com/tailscale/tailscale/issues/18800) is still **open and
+  unfixed upstream**; v1.102.2's `Close()` still unconditionally removes resolver files,
+  which deletes files belonging to an already-running instance during a launchd
+  KeepAlive restart. This fix is a plain bug fix (not the rejected "direction") and is
+  still required. On rebase it was extended to also guard `removeGlobalDNS`.
+- **The build/deploy tooling (`justfile`).** This is an unofficial, build-it-yourself
+  patch; the tooling to build, run via launchd, and revert is still needed regardless of
+  upstream code convergence.
+
+### Net effect
+
+For a **global-DNS** tailnet, MagicDNS now works largely on upstream v1.102.2 behavior,
+and it is worth periodically re-testing whether the **stock Homebrew build** suffices for
+your setup. For a **split-DNS** tailnet, and for the CleanUp race on launchd restarts,
+this patch is still doing work upstream has not landed. The broader SSH-in-Standalone gap
+([#4518](https://github.com/tailscale/tailscale/issues/4518)) — the reason to run the CLI
+variant at all — remains open with no timeline.
+
 ## Prerequisites
 
 - macOS, with the **Homebrew** Tailscale installed: `brew install tailscale`
